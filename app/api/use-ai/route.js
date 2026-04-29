@@ -87,7 +87,7 @@ const useAi = {
               isStandaloneImageMode: false,
               needsBlurPreview: false,
               deepResearchProcessor: "pro-fast",
-              selectedModel: "gateway-claude-opus-4.5",
+              selectedModel: "claude-opus-4-5", 
               disableReasoning: false,
               locale: "en",
               messages: [
