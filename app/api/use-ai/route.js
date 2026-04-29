@@ -4,23 +4,29 @@ import { randomUUID } from "crypto";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+};
+
 const useAi = {
   domain: "agents.use.ai",
-
   headers: {
     Host: "agents.use.ai",
     "User-Agent":
-      "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 Chrome/116.0.0.0 Mobile Safari/537.36",
+      "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36",
     Origin: "https://use.ai",
   },
 
   generateMessageId() {
-    const chars =
-      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
     let result = "";
+
     for (let i = 0; i < 15; i++) {
       result += chars.charAt(Math.floor(Math.random() * chars.length));
     }
+
     return result;
   },
 
@@ -38,24 +44,31 @@ const useAi = {
 
       const ws = new WebSocket(wsUrl, { headers: this.headers });
 
+      let finished = false;
       let fullResponse = "";
       let chatMetadata = null;
       let streamId = "";
 
+      const finish = (callback) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timeout);
+        try {
+          ws.close();
+        } catch {}
+        callback();
+      };
+
       const timeout = setTimeout(() => {
-        ws.close();
-        reject({ error: "Request timeout" });
+        finish(() => reject({ error: "Request timeout" }));
       }, 55000);
 
       ws.on("open", () => {
-        ws.send(
-          JSON.stringify({
-            type: "prewarm",
-            chatId,
-          })
-        );
+        ws.send(JSON.stringify({ type: "prewarm", chatId }));
 
         setTimeout(() => {
+          if (finished || ws.readyState !== WebSocket.OPEN) return;
+
           ws.send(
             JSON.stringify({
               abortSignal: {},
@@ -120,55 +133,60 @@ const useAi = {
         }
 
         if (response.type === "stream-complete") {
-          clearTimeout(timeout);
-          ws.close();
-
-          resolve({
-            id: chatId,
-            message: fullResponse,
-            streamId,
-            metadata: chatMetadata,
-            timestamp: new Date().toISOString(),
-          });
+          finish(() =>
+            resolve({
+              id: chatId,
+              message: fullResponse,
+              streamId,
+              metadata: chatMetadata,
+              timestamp: new Date().toISOString(),
+            })
+          );
         }
 
         if (response.type === "rate-limit-error") {
-          clearTimeout(timeout);
-          ws.close();
-          reject({
-            error: "Rate limit hit",
-            details: response.messageMetadata,
-          });
+          finish(() =>
+            reject({
+              error: "Rate limit hit",
+              details: response.messageMetadata,
+            })
+          );
         }
       });
 
       ws.on("error", (error) => {
-        clearTimeout(timeout);
-        reject({
-          error: "WebSocket error",
-          details: error.message,
-        });
+        finish(() =>
+          reject({
+            error: "WebSocket error",
+            details: error.message,
+          })
+        );
       });
     });
   },
 };
+
+function json(data, status = 200) {
+  return Response.json(data, { status, headers: corsHeaders });
+}
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: corsHeaders });
+}
 
 export async function GET(req) {
   const { searchParams } = new URL(req.url);
   const q = searchParams.get("q");
 
   if (!q) {
-    return Response.json(
-      { error: "Missing q parameter" },
-      { status: 400 }
-    );
+    return json({ error: "Missing q parameter" }, 400);
   }
 
   try {
     const result = await useAi.chat(q);
-    return Response.json(result);
+    return json(result);
   } catch (err) {
-    return Response.json(err, { status: 500 });
+    return json(err, 500);
   }
 }
 
@@ -178,15 +196,12 @@ export async function POST(req) {
     const q = body.q;
 
     if (!q) {
-      return Response.json(
-        { error: "Missing q in body" },
-        { status: 400 }
-      );
+      return json({ error: "Missing q in body" }, 400);
     }
 
     const result = await useAi.chat(q);
-    return Response.json(result);
+    return json(result);
   } catch (err) {
-    return Response.json(err, { status: 500 });
+    return json(err, 500);
   }
 }
